@@ -33,7 +33,7 @@ Chubby锁实际是一种服务，提供了粗粒度的锁和可靠的小容量�
 
 Chubby的设计初衷是实现一个分布式锁，一个典型的Chubby实例如下所示：
 <p align="center">
-  <img src="image.png" alt="alt image size" height="50%" width="50%">
+  <img src="./img/image-structrue.png" alt="alt image size" height="50%" width="50%">
 </p>
 
 - Chubby包括**服务端**与**客户端**两个部分；
@@ -43,7 +43,7 @@ Chubby的设计初衷是实现一个分布式锁，一个典型的Chubby实例�
 完整的Chubby分布式锁服务包含三个层面支持：一致性、锁实现和锁使用，Chubby提供了易于理解的API，用户可以通过API来直接获取/释放锁资源。这三个层面可描述如下图：
 
 <p align="center">
-  <img src="image-2.png" alt="alt image size" height="60%" width="60%">
+  <img src="./img/image-level.png" alt="alt image size" height="30%" width="30%">
 </p>
 
 ### 一致性
@@ -104,7 +104,7 @@ Chubby提供了丰富且易于理解的API：
 
 **使用锁的流程**：
 
-按照是否使用Sequencer，锁的具体使用流程可分为完整实现和简易实现，以完美实现为例，具体流程如下：
+按照是否使用Sequencer，锁的具体使用流程可分为完整实现和简易实现，以完整实现为例，具体流程如下：
 
 - 客户端发起`Aquire`请求，同时Master生成一个包含Lock版本号和锁类型的Sequencer；
 - Chubby Server在Lock相关节点的元信息中记录这个版本号，Lock版本号会在每次被成功`Aquire`时加一；
@@ -148,25 +148,31 @@ Master发生故障后，Chubby会根据一致性协议选举出新的Master，�
 - Master开始接受新的客户端KeepAlive请求，第一个KeepAlive会由于Epoch错误而被Maser拒绝，同时向客户端返回最新的Epoch；之后第二个KeepAlive直接返回以通知Client设置本地的Session租约时间；接着Master Block第三个KeepAlive，恢复正常的通信模式；
 - 从新请求中发现老Master创建的Handle时，新Master也需要重建，一段时间后，删除没有Handle的临时节点。
 <p align="center">
-  <img src="image-3.png" alt="alt image size" height="70%" width="70%">
+  <img src="./img/image-recovery.png" alt="alt image size" height="70%" width="70%">
 </p>
 
 ### 锁使用
 
-Chubby论文中以一个选主场景对如何使用锁给出了详细的说明，以完美方案为例：
+Chubby论文中以一个**选主场景**对如何使用锁给出了详细的说明，以完美方案为例：
 
-1. 所有Primary的竞争者，Open同一个Node，之后用得到的Handle调用Aquire来获取锁；
-2. 只有一个成功获得锁，成为Primary，其他竞争者称为Replicas；
-3. Primary将自己的标识通过SetContent写入Node；
-4. Replicas调用GetContentsAndStat获得当前的Primary标识，并注册该Node的内容修改Event，以便发现锁的Release或Primary的改变；
-5. Primary调用GetSequencer从当前的Handle中获得sequencer，并将其传递给所有需要锁保护的操作的Server；
-6. Server通过CheckSequencer检查其sequencer的合法性，拒绝旧的Primary的请求。
+1. 所有竞争者，`Open`同一个Node，之后用得到的Handle调用`Aquire`来获取锁；
+2. 只有一个成功`Aquire`获得锁，成为Primary，其他竞争者称为Replicas；
+3. Primary将自己的标识通过`SetContent`写入Node；
+4. Replicas调用`GetContentsAndStat`获得当前的Primary标识，并注册该Node的内容修改Event，以便发现锁的`Release`或Primary的改变；
+5. Primary调用`GetSequencer`从当前的Handle中获得sequencer，并将其传递给所有需要锁保护的操作的Server；
+6. Server通过`CheckSequencer`检查其sequencer的合法性，拒绝旧的Primary的请求。
 
 ## 特性思考与对比
 
 **性能与适用场景**：
+
 Chubby实现了对客户端友好的Cache机制，因此读请求十分高效，但是也因此牺牲了一定写性能：每个写请求会先阻塞，然后服务端通知所有客户端Cache失效后才会执行这个写请求。
 所以Chubby适用于**读多写少**的场景，例如分布式节点选主等。
+
+Chubby设计思想：
+
+- 责任分散
+- 性能优化
 
 **幂等**：
 
