@@ -8,6 +8,7 @@
     - [Compaction](#compaction)
   - [特性思考](#特性思考)
   - [性能瓶颈与优化](#性能瓶颈与优化)
+    - [RocksDB](#rocksdb)
   - [使用场景](#使用场景)
   - [性能测试与对比](#性能测试与对比)
   - [参考](#参考)
@@ -109,7 +110,7 @@ LevelDB的读写操作逻辑都相对简单，关键在于写入之后如何重�
 LevelDB主要用两种Compaction：
 
 - **Minor Compaction**：一次Minor Compaction非常简单，其本质就是将一个内存数据库中的所有数据持久化到一个磁盘文件中。。每次Minor Compaction结束后，都会生成一个新的sstable文件，也意味着LevelDB的版本状态发生了变化，会进行一个版本的更替。
-- **Major Compaction**：如果只有Minor Compaction，那么levelDB空间占用和查询效率将相当难以接受，因此需要Major Compaction来重新组织磁盘里存储的数据。相比于minor compaction，major compaction就会复杂地多，Major Compaction的触发条件有：
+- **Major Compaction**：如果只有Minor Compaction，那么LevelDB空间占用和查询效率将相当难以接受，因此需要Major Compaction来重新组织磁盘里存储的数据。相比于minor compaction，major compaction就会复杂地多，Major Compaction的触发条件有：
   - 当0层文件数超过预定的上限（默认为4个）；
   - 当level i层文件的总大小超过(10 ^ i) MB；
   - 当某个文件无效读取的次数过多。
@@ -156,6 +157,28 @@ LevelDB主要用两种Compaction：
   - 当0层文件数量超过`PauseTrigger`时，写入暂停，直至Major Compaction完成。
 - **Compaction策略**：Compaction操作会带来大量磁盘IO开销，这可能影响写入和读取速度，所以进行Compaction操作的时机与策略至关重要。例如，如何设置各个Level的文件阈值、尽量错峰进行Compaction等。
 - **单机限制**：LevelDB是一个KV存储框架，并没有提供分布式能力，单机的通信和IO能力可能存在瓶颈，可以引入分布式架构，利用主从/集群架构实现读写分离和数据分片，可在特定场景下提高数据库性能。
+
+### RocksDB
+
+RocksDB是Facebook公司在LevelDB基础之上开发的一个嵌入式K-V系统，在很多方面对LevelDB做了优化和增强，更像是一个完整的产品，比如：
+
+1. LevelDB是单线程合并文件，RocksDB可以支持多线程合并文件，充分利用多核的特性，加快文件合并的速度，避免文件合并期间引起系统停顿；
+LSM型的数据结构，最大的性能问题就出现在其合并的时间损耗上，在多CPU的环境下，多线程合并那是LevelDB所无法比拟的。不过据其官网上的介绍，似乎多线程合并还只是针对那些与下一层没有Key重叠的文件，只是简单的rename而已，至于在真正数据上的合并方面是否也有用到多线程，就只能看代码了。
+RocksDB增加了合并时过滤器，对一些不再符合条件的K-V进行丢弃，如根据K-V的有效期进行过滤。
+
+2. LevelDB只有一个Memtable，若Memtable满了还没有来得及持久化，则会减缓Put操作引起系统停顿；RocksDB支持管道式的Memtable，也就说允许根据需要开辟多个Memtable，以解决Put与Compact速度差异的性能瓶颈问题。
+
+3. LevelDB只能获取单个K-V；RocksDB支持一次获取多个K-V，还支持Key范围查找。
+
+4. Levledb不支持备份；RocksDB支持全量和增量备份。RocksDB允许将已删除的数据备份到指定的目录，供后续恢复。
+
+5. 压缩方面RocksDB可采用多种压缩算法，除了LevelDB用的snappy，还有zlib、bzip2。LevelDB里面按数据的压缩率（压缩后低于75%）判断是否对数据进行压缩存储，而RocksDB典型的做法是Level 0-2不压缩，最后一层使用zlib，而其它各层采用snappy。
+
+6. RocksDB除了简单的Put、Delete操作，还提供了一个Merge操作，说是为了对多个Put操作进行合并，优化了modify的效率。站在引擎实现者的角度来看，相比其带来的价值，其实现的成本要昂贵很多。个人觉得有时过于追求完美不见得是好事，据笔者所测（包括测试自己编写的引擎），性能的瓶颈其实主要在合并上，多一次少一次Put对性能的影响并无大碍。
+
+7. RocksDB提供一些方便的工具，这些工具包含解析sst文件中的K-V记录、解析MANIFEST文件的内容等。有了这些工具，就不用再像使用LevelDB那样，只能在程序中才能知道sst文件K-V的具体信息了。
+
+8. 其他优化：增加了column family，这样有利于多个不相关的数据集存储在同一个db中，因为不同column family的数据是存储在不同的sst和memtable中，所以一定程度上起到了隔离的作用。将flush和compaction分开不同的线程池，能有效的加快flush，防止stall拖延停顿。增加了对write ahead log(WAL)的特殊管理机制，这样就能方便管理WAL文件，因为WAL是binlog文件。
 
 ## 使用场景
 
